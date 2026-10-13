@@ -27,7 +27,7 @@ jobs:
       # Opens/updates a "Version Packages" PR while changesets are pending.
       # When that PR is merged, it tags the release and creates GitHub Releases.
       # Packages are private for now, so nothing is published to npm.
-      - uses: changesets/action@v1
+      - uses: changesets/action@v2
         with:
           version: pnpm version-packages
           publish: pnpm changeset tag
