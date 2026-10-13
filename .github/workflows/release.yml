@@ -1,36 +1,35 @@
 name: Release
 
+# Releases are cut by pushing a version tag (vX.Y.Z) after a release PR that ran
+# `pnpm version-packages` (Changesets) and updated CHANGELOG.md was merged.
+# The GitHub Release notes are taken from that version's CHANGELOG.md section.
 on:
   push:
-    branches: [main]
-
-concurrency: release-${{ github.ref }}
+    tags: ['v*.*.*']
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   release:
-    name: Changesets
+    name: GitHub Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Opens/updates a "Version Packages" PR while changesets are pending.
-      # When that PR is merged, it tags the release and creates GitHub Releases.
-      # Packages are private for now, so nothing is published to npm.
-      - uses: changesets/action@v1
-        with:
-          version: pnpm version-packages
-          publish: pnpm changeset tag
-          createGithubReleases: true
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[[^]]+\]: / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "No CHANGELOG.md section for $version" >&2
+            exit 1
+          fi
+      - name: Create release
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "Cutline $GITHUB_REF_NAME" --notes-file notes.md
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
