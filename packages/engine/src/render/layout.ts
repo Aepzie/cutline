@@ -1,4 +1,4 @@
-import type { CaptionStyle, Transform } from '@cutline/core';
+import type { Transform } from '@cutline/core';
 
 export interface Size {
   width: number;
@@ -50,22 +50,7 @@ export function placeText(project: Size, transform: Transform, renderScale = 1) 
   };
 }
 
-/** Vertical center of a caption box of `boxHeight` canvas pixels. */
-export function captionCenterY(
-  canvasHeight: number,
-  style: Pick<CaptionStyle, 'position' | 'margin'>,
-  boxHeight: number,
-): number {
-  const margin = style.margin * canvasHeight;
-  switch (style.position) {
-    case 'top':
-      return margin + boxHeight / 2;
-    case 'middle':
-      return canvasHeight / 2;
-    case 'bottom':
-      return canvasHeight - margin - boxHeight / 2;
-  }
-}
+export { captionCenterY } from '@cutline/core';
 
 /** "#rrggbb" / "#rrggbbaa" → { color: 0xrrggbb, alpha: 0..1 } */
 export function parseColor(hex: string): { color: number; alpha: number } {

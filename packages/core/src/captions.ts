@@ -1,6 +1,6 @@
 import { clipSpeed, isFreeze, isReversed, sourceSpan } from './clipmath';
 import type { Cue } from './operations/schemas';
-import type { Project, Word } from './schema';
+import type { CaptionStyle, Project, Word } from './schema';
 import { roundTime } from './time';
 
 export interface CueOptions {
@@ -92,4 +92,118 @@ export function mapWordsToTimeline(
     (w, i) =>
       i === 0 || !(out[i - 1]!.text === w.text && Math.abs(out[i - 1]!.start - w.start) < 0.05),
   );
+}
+
+export interface LaidOutWord {
+  text: string;
+  /** Index into the caption's word list (for highlighting). */
+  index: number;
+  x: number;
+  width: number;
+}
+
+export interface LaidOutLine {
+  words: LaidOutWord[];
+  width: number;
+}
+
+/**
+ * Greedy word wrap. `measure` returns the rendered width of a string; x
+ * positions are relative to the line start. Lines are later centered.
+ */
+export function layoutWords(
+  tokens: readonly string[],
+  measure: (text: string) => number,
+  maxWidth: number,
+): LaidOutLine[] {
+  const space = measure(' ');
+  const lines: LaidOutLine[] = [];
+  let line: LaidOutLine = { words: [], width: 0 };
+  tokens.forEach((text, index) => {
+    const width = measure(text);
+    const x = line.words.length === 0 ? 0 : line.width + space;
+    if (line.words.length > 0 && x + width > maxWidth) {
+      lines.push(line);
+      line = { words: [{ text, index, x: 0, width }], width };
+    } else {
+      line.words.push({ text, index, x, width });
+      line.width = x + width;
+    }
+  });
+  if (line.words.length > 0) lines.push(line);
+  return lines;
+}
+
+/** Splits caption text into tokens; maps to word timings when counts match. */
+export function captionTokens(
+  text: string,
+  words: ReadonlyArray<{ text: string }> | undefined,
+): { tokens: string[]; timed: boolean } {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  return {
+    tokens,
+    timed: Boolean(words && tokens.length > 0 && words.length === tokens.length),
+  };
+}
+
+/** Vertical center of a caption box of `boxHeight` canvas pixels. */
+export function captionCenterY(
+  canvasHeight: number,
+  style: Pick<CaptionStyle, 'position' | 'margin'>,
+  boxHeight: number,
+): number {
+  const margin = style.margin * canvasHeight;
+  switch (style.position) {
+    case 'top':
+      return margin + boxHeight / 2;
+    case 'middle':
+      return canvasHeight / 2;
+    case 'bottom':
+      return canvasHeight - margin - boxHeight / 2;
+  }
+}
+
+export interface ActiveTimeInterval {
+  start: number;
+  end: number;
+}
+
+/**
+ * Computes non-overlapping active time intervals for each word in `words`,
+ * matching the first-match (`findIndex`) rule used in `resolveFrame`.
+ */
+export function resolveActiveWordIntervals(
+  words: ReadonlyArray<{ start: number; end: number }>,
+): Map<number, ActiveTimeInterval[]> {
+  const result = new Map<number, ActiveTimeInterval[]>();
+  if (words.length === 0) return result;
+
+  const boundaries = new Set<number>();
+  for (const w of words) {
+    if (w.end > w.start) {
+      boundaries.add(w.start);
+      boundaries.add(w.end);
+    }
+  }
+  const sorted = Array.from(boundaries).sort((a, b) => a - b);
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const segStart = sorted[i]!;
+    const segEnd = sorted[i + 1]!;
+    const mid = (segStart + segEnd) / 2;
+    const activeIndex = words.findIndex((w) => mid >= w.start && mid < w.end);
+    if (activeIndex === -1) continue;
+
+    let intervals = result.get(activeIndex);
+    if (!intervals) {
+      intervals = [];
+      result.set(activeIndex, intervals);
+    }
+    const last = intervals[intervals.length - 1];
+    if (last && Math.abs(last.end - segStart) <= 1e-6) {
+      last.end = segEnd;
+    } else {
+      intervals.push({ start: segStart, end: segEnd });
+    }
+  }
+  return result;
 }

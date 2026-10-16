@@ -2,11 +2,15 @@ import {
   CaptionStyleSchema,
   animationAt,
   animationSampleTimes,
+  captionCenterY,
+  captionTokens,
   clipEnd,
+  layoutWords,
   clipSpeed,
   isFreeze,
   isReversed,
   previousAdjacent,
+  resolveActiveWordIntervals,
   resolveAudioSegments,
   segmentSourceTime,
   sourceTimeAt,
@@ -21,6 +25,7 @@ import {
   type VisualClip,
 } from '@cutline/core';
 import { add, isConstant, keyframePoints, multiply, num, piecewise, type Point } from './expr';
+import { createFontMeasure, resolveFontFile } from './fonts';
 import { shapeSource } from './shape';
 
 export interface GraphOptions {
@@ -340,7 +345,6 @@ export function buildRenderGraph(
         const from = Math.max(clip.start, start);
         const to = Math.min(clipEnd(clip), end);
         if (to <= from) continue;
-        if (style.highlightColor) warnings.add('caption word highlighting is preview-only');
         base = drawCaption(
           chains,
           base,
@@ -349,10 +353,12 @@ export function buildRenderGraph(
           style,
           from - start,
           to - start,
+          clip.start - start,
           W,
           H,
           sx,
           opts,
+          warnings,
         );
         continue;
       }
@@ -565,6 +571,7 @@ function drawText(
   const alpha = piecewise(opacityPoints(track, clip, opts.start, frame));
   const parts = [
     `textfile=${filterPath(opts.textFile(text))}`,
+    'expansion=none',
     fontOption(st.fontFamily, st.bold, st.italic, opts.fontFile),
     `fontsize=${fontSize}`,
     `fontcolor=${ffColor(st.color)}`,
@@ -596,34 +603,119 @@ function drawCaption(
   style: ReturnType<typeof CaptionStyleSchema.parse>,
   from: number,
   to: number,
+  clipStart: number,
   W: number,
   H: number,
   sx: number,
   opts: GraphOptions,
+  warnings: Set<string>,
 ): string {
   const size = style.fontSize * sx;
   const pad = Math.round(size * 0.35);
-  const text = wrapText(clip.text, size, style.maxWidth * W, true);
-  const margin = style.margin * H;
-  const y =
-    style.position === 'top'
-      ? `${num(margin + pad)}`
-      : style.position === 'middle'
-        ? `(h-text_h)/2`
-        : `h-text_h-${num(margin + pad)}`;
-  const parts = [
-    `textfile=${filterPath(opts.textFile(text))}`,
-    fontOption(style.fontFamily, true, false, opts.fontFile),
-    `fontsize=${num(size)}`,
-    `fontcolor=${ffColor(style.color)}`,
-    'text_align=C',
-    `x='(w-text_w)/2'`,
-    `y='${y}'`,
-    `enable='between(t,${num(from)},${num(to)})'`,
-  ];
+  const fontFile = opts.fontFile
+    ? opts.fontFile(style.fontFamily, true, false)
+    : resolveFontFile(style.fontFamily, true, false);
+  const measure = createFontMeasure(fontFile, size, true);
+
+  const { tokens, timed } = captionTokens(clip.text, clip.words);
+  const lines = layoutWords(tokens, measure, style.maxWidth * W);
+  if (lines.length === 0) return base;
+
+  const lineHeight = size * 1.25;
+  const boxW = Math.max(0, ...lines.map((l) => l.width)) + pad * 2;
+  const boxH = lines.length * lineHeight + pad * 2;
+  const centerY = captionCenterY(H, style, boxH);
+  const boxTop = centerY - boxH / 2;
+
+  const steps: string[] = [];
+
   if (style.backgroundColor) {
-    parts.push('box=1', `boxcolor=${ffColor(style.backgroundColor)}`, `boxborderw=${pad}`);
+    const boxX = (W - boxW) / 2;
+    const boxY = boxTop;
+    steps.push(
+      `drawbox=x='${num(boxX)}':y='${num(boxY)}':w='${num(boxW)}':h='${num(boxH)}':color=${ffColor(style.backgroundColor)}:t=fill:enable='between(t,${num(from)},${num(to)})'`,
+    );
   }
-  chains.push(`[${base}]drawtext=${parts.join(':')}[${out}]`);
-  return out;
+
+  // Base caption lines
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const lineText = line.words.map((w) => w.text).join(' ');
+    const lineX = (W - line.width) / 2;
+    const lineY = boxTop + pad + i * lineHeight + (lineHeight - size) / 2;
+    const parts = [
+      `textfile=${filterPath(opts.textFile(lineText))}`,
+      'expansion=none',
+      fontOption(style.fontFamily, true, false, opts.fontFile),
+      `fontsize=${num(size)}`,
+      `fontcolor=${ffColor(style.color)}`,
+      'y_align=font',
+      `x='${num(lineX)}'`,
+      `y='${num(lineY)}'`,
+      `enable='between(t,${num(from)},${num(to)})'`,
+    ];
+    steps.push(`drawtext=${parts.join(':')}`);
+  }
+
+  // Timed word highlight overlays
+  if (style.highlightColor && timed && clip.words) {
+    warnings.add('caption word highlighting is approximate in server renders');
+    const activeMap = resolveActiveWordIntervals(clip.words);
+    const MAX_HIGHLIGHT_WORDS = 200;
+    let highlightCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      const lineX = (W - line.width) / 2;
+      const lineY = boxTop + pad + i * lineHeight + (lineHeight - size) / 2;
+
+      for (const word of line.words) {
+        if (highlightCount >= MAX_HIGHLIGHT_WORDS) {
+          warnings.add('caption word highlighting capped to 200 words');
+          break;
+        }
+        const intervals = activeMap.get(word.index);
+        if (!intervals || intervals.length === 0) continue;
+
+        const visibleIntervals: Array<{ s: number; e: number }> = [];
+        for (const iv of intervals) {
+          const s = Math.max(from, clipStart + iv.start);
+          const e = Math.min(to, clipStart + iv.end);
+          if (e > s) {
+            visibleIntervals.push({ s, e });
+          }
+        }
+        if (visibleIntervals.length === 0) continue;
+
+        highlightCount++;
+        const wordX = lineX + word.x;
+        const wordY = lineY;
+        const enableExpr = visibleIntervals
+          .map((iv) => `between(t,${num(iv.s)},${num(iv.e)})`)
+          .join('+');
+        const highlightParts = [
+          `textfile=${filterPath(opts.textFile(word.text))}`,
+          'expansion=none',
+          fontOption(style.fontFamily, true, false, opts.fontFile),
+          `fontsize=${num(size)}`,
+          `fontcolor=${ffColor(style.highlightColor)}`,
+          'y_align=font',
+          `x='${num(wordX)}'`,
+          `y='${num(wordY)}'`,
+          `enable='between(t,${num(from)},${num(to)})*(${enableExpr})'`,
+        ];
+        steps.push(`drawtext=${highlightParts.join(':')}`);
+      }
+    }
+  }
+
+  let current = base;
+  for (let i = 0; i < steps.length; i++) {
+    const isLast = i === steps.length - 1;
+    const nextTag = isLast ? out : `${out}_c${i}`;
+    chains.push(`[${current}]${steps[i]}[${nextTag}]`);
+    current = nextTag;
+  }
+
+  return current;
 }

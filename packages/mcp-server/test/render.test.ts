@@ -280,6 +280,43 @@ describe.runIf(hasFfmpeg && hasFixtures)('server renderer (ffmpeg)', () => {
       expect(Math.abs(red.width - 80 * layer.transform.scale)).toBeLessThan(4);
     });
   }, 60_000);
+
+  it('renders highlighted caption words matching the resolver position', async () => {
+    const ctx = sequentialContext();
+    const project = applyOperations(
+      createProject({ name: 'Caption Render', settings: { width: 640, height: 360 } }, ctx),
+      [
+        {
+          type: 'add_captions',
+          cues: [
+            {
+              start: 0,
+              end: 3,
+              text: 'Hello world',
+              words: [
+                { text: 'Hello', start: 0, end: 1 },
+                { text: 'world', start: 1, end: 2 },
+              ],
+            },
+          ],
+          style: {
+            highlightColor: '#ff0000',
+            color: '#ffffff',
+            fontSize: 48,
+            backgroundColor: null,
+            position: 'middle',
+          },
+        },
+      ],
+      ctx,
+    ).project;
+    const blobs = new LocalBlobStore(await tempDir());
+    const [frame] = await new Renderer(ffmpeg, blobs).frames(project, [0.5], 640);
+    expect(frame).toBeDefined();
+    const red = redBox(frame!, 640, 360);
+    expect(red.width).toBeGreaterThan(10);
+    expect(red.cx).toBeLessThan(320);
+  }, 60_000);
 });
 
 /** testsrc clips: 'fast' (2×, 0–2 s, source 0–4), 'rev' (reversed, 2–5 s, source 0–3) + a hold. */

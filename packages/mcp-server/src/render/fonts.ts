@@ -1,4 +1,6 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import opentype from 'opentype.js';
+import { log } from '../log';
 
 type Variant = 'regular' | 'bold' | 'italic' | 'boldItalic';
 type Family = 'sans' | 'serif' | 'mono';
@@ -115,4 +117,101 @@ export function resolveFontFile(
     cache.set(key, found ?? fallback);
   }
   return cache.get(key);
+}
+
+const fontObjectCache = new Map<string, opentype.Font | null>();
+
+/** Loads and parses a font file (cached in memory). */
+export function loadFontFile(filePath: string): opentype.Font | null {
+  if (fontObjectCache.has(filePath)) {
+    return fontObjectCache.get(filePath) ?? null;
+  }
+  try {
+    const buf = readFileSync(filePath);
+    const font = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+    fontObjectCache.set(filePath, font);
+    return font;
+  } catch {
+    fontObjectCache.set(filePath, null);
+    return null;
+  }
+}
+
+/** The subset of an opentype.js font that text measurement relies on. */
+export type MeasurableFont = Pick<opentype.Font, 'charToGlyph' | 'getKerningValue' | 'unitsPerEm'>;
+
+/** Em-based width estimate used when no usable font metrics are available. */
+export function estimateTextWidth(text: string, fontSize: number, bold = false): number {
+  return text.length * fontSize * (bold ? 0.58 : 0.52);
+}
+
+/**
+ * Sums glyph advances (plus pair kerning) without GSUB shaping.
+ * `font.getAdvanceWidth` applies GSUB features such as ccmp, and opentype.js
+ * 2.0.0 throws on lookup types it does not support (e.g. chained contextual
+ * substitution format 2 in DejaVu on Linux), so we stay on the plain cmap/hmtx path.
+ */
+export function measureGlyphAdvances(font: MeasurableFont, text: string, fontSize: number): number {
+  const scale = fontSize / font.unitsPerEm;
+  let width = 0;
+  let prev: opentype.Glyph | undefined;
+  for (const ch of text) {
+    const glyph = font.charToGlyph(ch);
+    width += glyph.advanceWidth ?? 0;
+    if (prev) {
+      try {
+        width += font.getKerningValue(prev, glyph);
+      } catch {
+        // Kerning is cosmetic; ignore broken kern/GPOS tables.
+      }
+    }
+    prev = glyph;
+  }
+  return width * scale;
+}
+
+const warnedFonts = new Set<string>();
+
+/**
+ * Wraps glyph-advance measurement of `font` so it can never throw: on any error
+ * the em-based estimate is used and a warning is logged once per `fontKey`.
+ */
+export function measureWithFallback(
+  font: MeasurableFont,
+  fontKey: string,
+  fontSize: number,
+  bold = false,
+): (text: string) => number {
+  return (text: string) => {
+    try {
+      const width = measureGlyphAdvances(font, text, fontSize);
+      if (Number.isFinite(width)) return width;
+      throw new Error(`non-finite width ${width}`);
+    } catch (err) {
+      if (!warnedFonts.has(fontKey)) {
+        warnedFonts.add(fontKey);
+        log.warn(
+          `could not measure text with font ${fontKey}; using estimated widths`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+      return estimateTextWidth(text, fontSize, bold);
+    }
+  };
+}
+
+/**
+ * Returns a text measuring function using the actual font metrics from
+ * opentype.js when a font file is available, or an estimated glyph width fallback.
+ */
+export function createFontMeasure(
+  fontFilePath: string | undefined,
+  fontSize: number,
+  bold = false,
+): (text: string) => number {
+  if (fontFilePath) {
+    const font = loadFontFile(fontFilePath);
+    if (font) return measureWithFallback(font, fontFilePath, fontSize, bold);
+  }
+  return (text: string) => estimateTextWidth(text, fontSize, bold);
 }

@@ -12,6 +12,10 @@ import {
   toDb,
   unionRanges,
   wordsToCues,
+  captionCenterY,
+  captionTokens,
+  layoutWords,
+  resolveActiveWordIntervals,
   type Envelope,
   type Project,
 } from '../src';
@@ -206,6 +210,71 @@ describe('captions', () => {
     const slow = wordsToCues([w('a', 0), w('b', 0.5), w('c', 1)], { maxDuration: 0.6, maxGap: 5 });
     expect(slow).toHaveLength(3);
     expect(wordsToCues([])).toEqual([]);
+  });
+
+  it('tokenizes caption text and checks timing match', () => {
+    expect(captionTokens('hello world', undefined)).toEqual({
+      tokens: ['hello', 'world'],
+      timed: false,
+    });
+    expect(captionTokens('hello world', [{ text: 'hello' }, { text: 'world' }])).toEqual({
+      tokens: ['hello', 'world'],
+      timed: true,
+    });
+    expect(captionTokens('hello world', [{ text: 'hello' }])).toEqual({
+      tokens: ['hello', 'world'],
+      timed: false,
+    });
+    expect(captionTokens('', [])).toEqual({ tokens: [], timed: false });
+  });
+
+  it('lays out caption words with word-wrapping', () => {
+    const measure = (t: string) => t.length * 10;
+    const lines = layoutWords(['one', 'two', 'three', 'four'], measure, 70);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]!.words.map((w) => w.text)).toEqual(['one', 'two']);
+    expect(lines[0]!.words[0]).toEqual({ text: 'one', index: 0, x: 0, width: 30 });
+    expect(lines[0]!.words[1]).toEqual({ text: 'two', index: 1, x: 40, width: 30 });
+    expect(lines[0]!.width).toBe(70);
+    expect(lines[1]!.words.map((w) => w.text)).toEqual(['three']);
+    expect(lines[2]!.words.map((w) => w.text)).toEqual(['four']);
+    expect(layoutWords([], measure, 100)).toEqual([]);
+  });
+
+  it('positions caption center vertically based on style position and margin', () => {
+    expect(captionCenterY(1000, { position: 'top', margin: 0.1 }, 100)).toBe(150);
+    expect(captionCenterY(1000, { position: 'middle', margin: 0.1 }, 100)).toBe(500);
+    expect(captionCenterY(1000, { position: 'bottom', margin: 0.1 }, 100)).toBe(850);
+  });
+
+  it('resolves active word intervals respecting findIndex precedence', () => {
+    // Non-overlapping
+    const sequential = resolveActiveWordIntervals([
+      { start: 1, end: 2 },
+      { start: 2, end: 3 },
+    ]);
+    expect(sequential.get(0)).toEqual([{ start: 1, end: 2 }]);
+    expect(sequential.get(1)).toEqual([{ start: 2, end: 3 }]);
+
+    // Overlapping: word 0 takes priority over word 1
+    const overlap = resolveActiveWordIntervals([
+      { start: 1, end: 3 },
+      { start: 2, end: 4 },
+    ]);
+    expect(overlap.get(0)).toEqual([{ start: 1, end: 3 }]);
+    expect(overlap.get(1)).toEqual([{ start: 3, end: 4 }]);
+
+    // Words with gap between them
+    const withGap = resolveActiveWordIntervals([
+      { start: 1, end: 2 },
+      { start: 3, end: 4 },
+    ]);
+    expect(withGap.get(0)).toEqual([{ start: 1, end: 2 }]);
+    expect(withGap.get(1)).toEqual([{ start: 3, end: 4 }]);
+
+    // Empty or zero-duration words
+    expect(resolveActiveWordIntervals([])).toEqual(new Map());
+    expect(resolveActiveWordIntervals([{ start: 2, end: 2 }])).toEqual(new Map());
   });
 });
 
