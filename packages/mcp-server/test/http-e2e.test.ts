@@ -159,6 +159,21 @@ describe.runIf(hasFfmpeg && hasFixtures)('MCP over Streamable HTTP + live sync',
     const imageBeats = await fetch(beatsUrl.replace(music.id, image.id));
     expect(await imageBeats.json()).toEqual({ beats: null });
 
+    const envelopeUrl = `${server.url}/api/projects/${projectId}/assets/${music.id}/envelope`;
+    const envelopeResponse = await fetch(envelopeUrl);
+    expect(envelopeResponse.status).toBe(200);
+    const analysedEnvelope = (await envelopeResponse.json()) as {
+      envelope: { windowSec: number; peak: number[] };
+    };
+    expect(analysedEnvelope.envelope.windowSec).toBeCloseTo(0.01, 3);
+    expect(analysedEnvelope.envelope.peak.length).toBeGreaterThan(0);
+    expect(await (await fetch(envelopeUrl)).json()).toEqual(analysedEnvelope);
+
+    const imageEnvelope = await fetch(envelopeUrl.replace(music.id, image.id));
+    expect(await imageEnvelope.json()).toEqual({ envelope: { windowSec: 0.01, peak: [] } });
+    const missingEnvelope = await fetch(envelopeUrl.replace(music.id, 'missing_asset'));
+    expect(missingEnvelope.status).toBe(404);
+
     const exported = await tool('export_video', { quality: 'draft' });
     expect(exported.url).toMatch(/\/api\/projects\/.+\/exports\/.+\.mp4$/);
     expect(

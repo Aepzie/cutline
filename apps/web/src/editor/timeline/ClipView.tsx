@@ -1,11 +1,13 @@
-import { memo, useEffect, useState, type PointerEvent } from 'react';
+import { memo, useEffect, useRef, useState, type PointerEvent } from 'react';
 import { Bot, Lock } from 'lucide-react';
 import { clipEnd, clipSpeed, isFreeze, isReversed, type Clip, type Track } from '@cutline/core';
 import type { BeatInfo } from '@/lib/api';
 import { useBeats } from '@/lib/beats';
+import { useEnvelopes } from '@/lib/envelopes';
 import { HIGHLIGHT_MS, useEditor } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { TRACK_HEIGHT, beatTimes } from './geometry';
+import { sampleWaveform } from './waveform';
 
 export type DragKind = 'move' | 'trim-start' | 'trim-end';
 
@@ -67,6 +69,11 @@ export const ClipView = memo(function ClipView({
   const assetName = useEditor((s) =>
     'assetId' in clip ? s.project?.assets.find((a) => a.id === clip.assetId)?.name : undefined,
   );
+  const waveformAsset = useEditor((s) => {
+    if (clip.type !== 'audio' && clip.type !== 'video') return undefined;
+    return s.project?.assets.find((asset) => asset.id === clip.assetId && asset.hasAudio);
+  });
+  const projectId = useEditor((s) => s.projectId);
   const select = useEditor((s) => s.select);
   const grid = useBeats((s) => ('assetId' in clip ? s.byAsset[clip.assetId] : undefined));
   const highlight = useHighlight(clip.id);
@@ -92,7 +99,7 @@ export const ClipView = memo(function ClipView({
       data-clip-id={clip.id}
       data-proposed={proposed || undefined}
       className={cn(
-        'group absolute top-[3px] overflow-hidden rounded-md text-[11px] text-white/95 shadow-sm outline-offset-1 transition-[box-shadow,opacity]',
+        'group absolute top-[3px] isolate overflow-hidden rounded-md text-[11px] text-white/95 shadow-sm outline-offset-1 transition-[box-shadow,opacity]',
         COLORS[clip.type],
         selected && 'ring-2 ring-white',
         (highlight || proposed) && 'agent-highlight',
@@ -116,6 +123,16 @@ export const ClipView = memo(function ClipView({
         />
       )}
       {grid && <BeatTicks clip={clip} grid={grid} zoom={zoom} />}
+      {waveformAsset && projectId && 'sourceStart' in clip && (
+        <ClipWaveform
+          projectId={projectId}
+          assetId={waveformAsset.id}
+          sourceStart={clip.sourceStart}
+          duration={clip.duration * clipSpeed(clip)}
+          reversed={isReversed(clip)}
+          zoom={zoom}
+        />
+      )}
       <div className="pointer-events-none flex h-full items-start gap-1 px-1.5 py-1">
         {track.locked && <Lock className="size-3 shrink-0 opacity-70" />}
         {highlight && (
@@ -156,6 +173,82 @@ export const ClipView = memo(function ClipView({
     </div>
   );
 });
+
+function ClipWaveform({
+  projectId,
+  assetId,
+  sourceStart,
+  duration,
+  reversed,
+  zoom,
+}: {
+  projectId: string;
+  assetId: string;
+  sourceStart: number;
+  duration: number;
+  reversed: boolean;
+  zoom: number;
+}) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const envelope = useEnvelopes((s) =>
+    s.projectId === projectId ? s.byAsset[assetId] : undefined,
+  );
+
+  useEffect(() => {
+    void useEnvelopes.getState().load(projectId, assetId);
+  }, [projectId, assetId]);
+
+  useEffect(() => {
+    const node = canvas.current;
+    if (!node || !envelope || envelope.peak.length === 0) return;
+    const rect = node.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    const sampleWidth = Math.min(width, 4096);
+    node.width = Math.round(sampleWidth * ratio);
+    node.height = Math.round(height * ratio);
+    const context = node.getContext('2d');
+    if (!context) return;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, sampleWidth, height);
+
+    const peaks = sampleWaveform(envelope, sourceStart, duration, sampleWidth, reversed);
+    const center = height / 2;
+    const maxHalfHeight = height * 0.38;
+    // dB scale: map linear 0..1 → dBFS → 0..1 over −48…0 dBFS range so
+    // moderate-level audio (e.g. −18 dBFS) is clearly visible.
+    const DB_FLOOR = -48;
+    const toDbNorm = (linear: number) => {
+      if (linear <= 0) return 0;
+      const db = 20 * Math.log10(linear);
+      return Math.max(0, Math.min(1, (db - DB_FLOOR) / -DB_FLOOR));
+    };
+    context.beginPath();
+    context.strokeStyle = 'rgba(255, 255, 255, 0.62)';
+    context.lineWidth = 1;
+    for (let x = 0; x < peaks.length; x++) {
+      const peak = peaks[x] ?? 0;
+      if (peak <= 0) continue;
+      const amplitude = Math.max(0.6, toDbNorm(peak) * maxHalfHeight);
+      context.moveTo(x + 0.5, center - amplitude);
+      context.lineTo(x + 0.5, center + amplitude);
+    }
+    context.stroke();
+  }, [envelope, sourceStart, duration, zoom]);
+
+  if (!envelope || envelope.peak.length === 0) return null;
+  return (
+    <canvas
+      ref={canvas}
+      aria-hidden
+      data-waveform={assetId}
+      className="pointer-events-none absolute inset-0 z-0 size-full opacity-75"
+    />
+  );
+}
 
 /** Beat markers along the bottom of a clip; bars are taller. Thinned out when zoomed far out. */
 function BeatTicks({ clip, grid, zoom }: { clip: Clip; grid: BeatInfo; zoom: number }) {
