@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@cutline/core": "workspace:*",
-    "mediabunny": "^1.61.4",
+    "mediabunny": "^1.61.6",
     "pixi.js": "^8.22.0"
   }
 }

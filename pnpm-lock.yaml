@@ -175,8 +175,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       mediabunny:
-        specifier: ^1.61.4
-        version: 1.61.4
+        specifier: ^1.61.6
+        version: 1.61.6
       pixi.js:
         specifier: ^8.22.0
         version: 8.22.0
@@ -199,8 +199,8 @@ importers:
         specifier: ^11.1.21
         version: 11.1.21
       mediabunny:
-        specifier: ^1.61.4
-        version: 1.61.4
+        specifier: ^1.61.6
+        version: 1.61.6
       opentype.js:
         specifier: ^2.0.0
         version: 2.0.0
@@ -3018,8 +3018,8 @@ packages:
     resolution: {integrity: sha512-yz3xRaG20c6/BOzvYoDaGtPmGscs7YivItZEEqe6GbwNfHuxu9YNmvnEkMzKldAGY4/80pRcQRZSEnhquk9XuQ==}
     engines: {node: '>= 0.8'}
 
-  mediabunny@1.61.4:
-    resolution: {integrity: sha512-gZPBi40ldiZGeU2DJxT/Q3hlNiaxfpwNYTfmi0Maq3SoBJT64+W+ySc0Z7t+2JUGxNbkXnLFrDkSS2OQuweOhA==}
+  mediabunny@1.61.6:
+    resolution: {integrity: sha512-VHEZ53/7jGl4dQ+uOdndsZufFYwEUFWv9UXgvrGun3OapyzoqI9iaPOD7z3xxY/nAttLZBNwswgJzMtGJAquOQ==}
 
   merge-descriptors@2.0.0:
     resolution: {integrity: sha512-Snk314V5ayFLhp3fkUREub6WtjBfPdCPY1Ln8/8munuLuiYhsABgBVWsozAG+MWMbVEvcdcpbi9R7ww22l9Q3g==}
@@ -6304,7 +6304,7 @@ snapshots:
 
   media-typer@1.1.1: {}
 
-  mediabunny@1.61.4:
+  mediabunny@1.61.6:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
