@@ -1,12 +1,5 @@
 import { useRef, useState, type DragEvent } from 'react';
-import {
-  FileAudio,
-  FileVideo,
-  Image as ImageIcon,
-  Plus,
-  Trash2,
-  Upload,
-} from 'lucide-react';
+import { FileAudio, FileVideo, Image as ImageIcon, Plus, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Asset } from '@cutline/core';
 import { probeMedia } from '@cutline/engine';
