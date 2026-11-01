@@ -1,5 +1,12 @@
 import { useRef, useState, type DragEvent } from 'react';
-import { FileAudio, FileVideo, Image as ImageIcon, Plus, Upload } from 'lucide-react';
+import {
+  FileAudio,
+  FileVideo,
+  Image as ImageIcon,
+  Plus,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import type { Asset } from '@cutline/core';
 import { probeMedia } from '@cutline/engine';
@@ -81,6 +88,28 @@ export function AssetBin() {
 
   const addToTimeline = (asset: Asset) => void dispatch([{ type: 'add_clip', assetId: asset.id }]);
 
+  const removeFromProject = async (asset: Asset) => {
+    if (!project) return;
+    const clips = project.tracks.flatMap((track) =>
+      track.clips.filter((clip) => 'assetId' in clip && clip.assetId === asset.id),
+    );
+    if (
+      clips.length > 0 &&
+      !window.confirm(
+        `"${asset.name}" is used by ${clips.length} timeline clip${clips.length === 1 ? '' : 's'}.\n\nRemove the asset and all of its timeline clips? You can undo this action.`,
+      )
+    )
+      return;
+
+    if (
+      await dispatch(
+        [{ type: 'remove_asset', assetId: asset.id, removeClips: true }],
+        'Remove asset',
+      )
+    )
+      toast.success(`Removed ${asset.name} from the project`);
+  };
+
   return (
     <section
       aria-label="Media"
@@ -159,6 +188,19 @@ export function AssetBin() {
                   onClick={() => addToTimeline(asset)}
                 >
                   <Plus />
+                </Button>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={`Remove ${asset.name} from the project`}
+                  title="Remove from project"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void removeFromProject(asset);
+                  }}
+                >
+                  <Trash2 />
                 </Button>
               </div>
             </li>
